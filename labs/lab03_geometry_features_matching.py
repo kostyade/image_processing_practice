@@ -9,6 +9,17 @@ import cv2
 import numpy as np
 
 
+def _cv_border_mode(border: str) -> int:
+    border_map = {
+        "reflect": cv2.BORDER_REFLECT_101,
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE,
+    }
+    if border not in border_map:
+        raise ValueError(f"Unsupported border mode: {border}")
+    return border_map[border]
+
+
 def warp_affine(image: np.ndarray, M: np.ndarray, out_shape: tuple[int, int], border: str = "reflect") -> np.ndarray:
     """
     Warp image with affine transform.
@@ -22,7 +33,14 @@ def warp_affine(image: np.ndarray, M: np.ndarray, out_shape: tuple[int, int], bo
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_affine is not implemented")
+    out_h, out_w = out_shape
+    return cv2.warpAffine(
+        image,
+        np.asarray(M, dtype=np.float32),
+        dsize=(out_w, out_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=_cv_border_mode(border),
+    )
 
 
 def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int], border: str = "reflect") -> np.ndarray:
@@ -38,7 +56,14 @@ def warp_perspective(image: np.ndarray, H: np.ndarray, out_shape: tuple[int, int
     Returns:
         Warped image.
     """
-    raise NotImplementedError("warp_perspective is not implemented")
+    out_h, out_w = out_shape
+    return cv2.warpPerspective(
+        image,
+        np.asarray(H, dtype=np.float32),
+        dsize=(out_w, out_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=_cv_border_mode(border),
+    )
 
 
 def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPoint], np.ndarray | None]:
@@ -52,7 +77,13 @@ def detect_orb(image: np.ndarray, n_features: int = 500) -> tuple[list[cv2.KeyPo
     Returns:
         `(keypoints, descriptors)`, where descriptors may be `None`.
     """
-    raise NotImplementedError("detect_orb is not implemented")
+    if image.ndim == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    orb = cv2.ORB_create(nfeatures=n_features)
+    keypoints, descriptors = orb.detectAndCompute(gray, None)
+    return keypoints, descriptors
 
 
 def match_descriptors(
@@ -73,7 +104,23 @@ def match_descriptors(
     Returns:
         Good matches sorted by distance.
     """
-    raise NotImplementedError("match_descriptors is not implemented")
+    if desc1 is None or desc2 is None or len(desc1) == 0 or len(desc2) == 0:
+        return []
+    if method != "bf_hamming":
+        raise ValueError(f"Unsupported matching method: {method}")
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    knn_matches = matcher.knnMatch(desc1, desc2, k=2)
+
+    good_matches: list[cv2.DMatch] = []
+    for pair in knn_matches:
+        if len(pair) < 2:
+            continue
+        m, n = pair
+        if m.distance < ratio_test * n.distance:
+            good_matches.append(m)
+    good_matches.sort(key=lambda m: m.distance)
+    return good_matches
 
 
 def estimate_homography_from_matches(
@@ -94,7 +141,15 @@ def estimate_homography_from_matches(
     Returns:
         `(H, inlier_mask)` or `(None, None)`.
     """
-    raise NotImplementedError("estimate_homography_from_matches is not implemented")
+    if len(matches) < 4:
+        return None, None
+
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+    H, inlier_mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_thresh)
+    if H is None or inlier_mask is None:
+        return None, None
+    return H, inlier_mask.ravel().astype(np.uint8)
 
 
 def main() -> int:
