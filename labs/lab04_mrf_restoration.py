@@ -35,7 +35,37 @@ def mrf_energy(
     Returns:
         Scalar energy.
     """
-    raise NotImplementedError("mrf_energy is not implemented")
+    if x.ndim != 2 or y.ndim != 2:
+        raise ValueError(f"Expected 2-D grayscale images, got x.ndim={x.ndim}, y.ndim={y.ndim}")
+    if x.shape != y.shape:
+        raise ValueError(f"Shape mismatch: x {x.shape} vs y {y.shape}")
+    if lambda_smooth < 0:
+        raise ValueError(f"lambda_smooth must be non-negative, got {lambda_smooth}")
+
+    x = x.astype(np.float64)
+    y = y.astype(np.float64)
+
+    # Data term: sum_p (x_p - y_p)^2
+    data_term = np.sum((x - y) ** 2)
+
+    # Smoothness term: sum over 4-connected neighbor pairs
+    def _penalty(diff: np.ndarray) -> np.ndarray:
+        if penalty == "quadratic":
+            return diff ** 2
+        else:  # huber
+            abs_d = np.abs(diff)
+            return np.where(
+                abs_d <= huber_delta,
+                0.5 * diff ** 2,
+                huber_delta * (abs_d - 0.5 * huber_delta),
+            )
+
+    smooth_term = (
+        np.sum(_penalty(x[:, 1:] - x[:, :-1]))   # horizontal
+        + np.sum(_penalty(x[1:, :] - x[:-1, :]))  # vertical
+    )
+
+    return data_term + lambda_smooth * smooth_term
 
 
 def mrf_denoise(
@@ -60,12 +90,57 @@ def mrf_denoise(
     Returns:
         Restored image with the same shape as `y`.
     """
-    raise NotImplementedError("mrf_denoise is not implemented")
+    if y.ndim != 2:
+        raise ValueError(f"Expected 2-D grayscale image, got y.ndim={y.ndim}")
+    if num_iters < 0:
+        raise ValueError(f"num_iters must be non-negative, got {num_iters}")
+    if step <= 0:
+        raise ValueError(f"step must be positive, got {step}")
+
+    x = y.astype(np.float64).copy()
+    y_f = y.astype(np.float64)
+
+    for _ in range(num_iters):
+        # Gradient of data term: 2*(x - y)
+        grad = 2.0 * (x - y_f)
+
+        # Gradient of smoothness term (4-connected neighbors)
+        def _penalty_grad(diff: np.ndarray) -> np.ndarray:
+            if penalty == "quadratic":
+                return 2.0 * diff
+            else:  # huber
+                return np.where(
+                    np.abs(diff) <= huber_delta,
+                    diff,
+                    huber_delta * np.sign(diff),
+                )
+
+        smooth_grad = np.zeros_like(x)
+        # Horizontal: x[i,j] - x[i,j+1]
+        dh = _penalty_grad(x[:, 1:] - x[:, :-1])
+        smooth_grad[:, 1:] += dh
+        smooth_grad[:, :-1] -= dh
+        # Vertical: x[i,j] - x[i+1,j]
+        dv = _penalty_grad(x[1:, :] - x[:-1, :])
+        smooth_grad[1:, :] += dv
+        smooth_grad[:-1, :] -= dv
+
+        grad += lambda_smooth * smooth_grad
+
+        x -= step * grad
+        x = np.clip(x, 0.0, 255.0)
+
+    return x.astype(np.float32)
 
 
 def normalize_to_uint8(x: np.ndarray) -> np.ndarray:
     """Min-max normalize array to [0,255] uint8 for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    if x.size == 0:
+        raise ValueError("Input array is empty")
+    x_min, x_max = x.min(), x.max()
+    if x_max - x_min < 1e-8:
+        return np.zeros_like(x, dtype=np.uint8)
+    return ((x - x_min) / (x_max - x_min) * 255.0).astype(np.uint8)
 
 
 def main() -> int:
