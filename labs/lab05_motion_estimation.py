@@ -26,7 +26,29 @@ def optical_flow_farneback(prev_gray: np.ndarray, next_gray: np.ndarray, **param
     Returns:
         Dense flow field `(H, W, 2)` as float array.
     """
-    raise NotImplementedError("optical_flow_farneback is not implemented")
+    if prev_gray.ndim != 2 or next_gray.ndim != 2:
+        raise ValueError(f"Expected 2-D grayscale images, got prev.ndim={prev_gray.ndim}, next.ndim={next_gray.ndim}")
+    if prev_gray.shape != next_gray.shape:
+        raise ValueError(f"Shape mismatch: prev {prev_gray.shape} vs next {next_gray.shape}")
+
+    defaults: dict[str, Any] = dict(
+        flow=None,
+        pyr_scale=0.5,
+        levels=3,
+        winsize=15,
+        iterations=3,
+        poly_n=5,
+        poly_sigma=1.2,
+        flags=0,
+    )
+    defaults.update(params)
+
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_gray.astype(np.uint8),
+        next_gray.astype(np.uint8),
+        **defaults,
+    )
+    return flow
 
 
 def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
@@ -39,7 +61,18 @@ def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
     Returns:
         `uint8` BGR image `(H,W,3)` suitable for `cv2.imwrite`.
     """
-    raise NotImplementedError("flow_to_hsv is not implemented")
+    if flow_xy.ndim != 3 or flow_xy.shape[2] != 2:
+        raise ValueError(f"Expected flow of shape (H,W,2), got {flow_xy.shape}")
+
+    mag, ang = cv2.cartToPolar(flow_xy[..., 0], flow_xy[..., 1])
+
+    hsv = np.zeros((*flow_xy.shape[:2], 3), dtype=np.uint8)
+    hsv[..., 0] = (ang * 180.0 / np.pi / 2.0).astype(np.uint8)  # Hue = direction
+    hsv[..., 1] = 255                                              # Saturation = full
+    hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)  # Value = magnitude
+
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return bgr
 
 
 def main() -> int:
